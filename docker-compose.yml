@@ -1,0 +1,21 @@
+version: '3'
+services:
+  mariadb:
+    image: 'docker.io/bitnami/mariadb:10.3-debian-10'
+    hostname: testdb
+    container_name: testDB
+    restart: always
+    ports:
+      - '${DB_PORT}:3306'
+    volumes:
+      - testdb_data:/var/lib/mysql
+    environment:
+      - ALLOW_EMPTY_PASSWORD=yes
+      - MARIADB_USER=${DB_USER}
+      - MARIADB_PASSWORD=${DB_PASSWORD}
+      - MARIADB_DATABASE=${DB_NAME}
+      - MARIADB_CHARACTER_SET=utf8mb4
+      - MARIADB_COLLATE=utf8mb4_unicode_ci
+volumes:
+  testdb_data:
+   
