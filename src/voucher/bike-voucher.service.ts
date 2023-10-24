@@ -41,9 +41,9 @@ export class BikeVoucherService {
       }
         const existingCode = await this.utilsService.findByCode(createVoucherDto.code);
         if (existingCode){
-          return Object.assign({
+          return {
             message: `Error: Mã code đã tồn tại`,
-        });
+        };
         }
         //hiện tại discout_type đang gán 2 giá trị ở bikes-voucher
         if(!(parseInt(createVoucherDto.discount_type) > 0 && parseInt(createVoucherDto.discount_type) <= 2)){
@@ -76,22 +76,6 @@ export class BikeVoucherService {
         }       
         const voucher = this.voucherRepository.create(voucherModel);
         const result = await this.voucherRepository.save(voucher);
-        // if (createVoucherDto.merchant_ids != null && createVoucherDto.is_for_specified_merchants == true) {
-        //   const arr = await this.utilsService.checkExistenceMerchant(
-        //     createVoucherDto.merchant_ids
-        //   );
-        //   await Promise.all(
-        //     arr.map(async (merchantId) => {
-        //       const voucherAppliedMerchantModel = {
-        //         code: createVoucherDto.code,
-        //         merchant_id: merchantId,
-        //       };
-        //       await this.voucherAppliedMerchantRepository.create(
-        //         voucherAppliedMerchantModel
-        //       );
-        //     })
-        //   );
-        // }
         return result
    
     } catch (error: any) {
