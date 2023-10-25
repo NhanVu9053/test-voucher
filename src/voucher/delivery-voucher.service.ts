@@ -40,9 +40,9 @@ export class DeliveryVoucherService {
       }
         const existingCode = await this.utilsService.findByCode(createVoucherDto.code);
         if (existingCode){
-          return Object.assign({
+          return {
             message: `Error: Mã code đã tồn tại`,
-        });
+        };
         }
         //hiện tại discout_type đang gán 2 giá trị ở bikes-voucher
         if(!(parseInt(createVoucherDto.discount_type) > 0 && parseInt(createVoucherDto.discount_type) <= 4)){
@@ -113,6 +113,221 @@ export class DeliveryVoucherService {
     } catch (error: any) {
       this.logger.log(`Error: ${error}`);
       this.logger.log(`Error: ${error.message}`);
+    }
+  }
+  async delivery_check_voucher(
+    order_price: number,
+    shipping_fee: number,
+    promotion_code: string,
+    customer_id: string,
+    merchantId: string
+  ): Promise<any> {
+    try {
+      // console.log(`delivery-voucher: checking...`);
+      var checkData = await this.utilsService.getVoucherByCode(promotion_code);
+      // console.log(`delivery-voucher: checkData${JSON.stringify(checkData)}`);
+      if (!checkData.check) {
+        return {
+          status: "error",
+          data: {
+            promotion_status: `invalid`,
+            promotion_message: "Voucher không áp dụng thành công",
+          },
+        };
+      }
+      if (checkData.data.is_for_specified_merchants) {
+        const isForSpecified =
+          await this.voucherAppliedMerchantRepository.checkFindMerchantByCode(
+            promotion_code,
+            merchantId
+          );
+        if (!isForSpecified) {
+          return {
+            status: "error",
+            data: {
+              promotion_status: `Mã ${promotion_code} không áp dụng cho cửa hàng này`,
+              promotion_message: "Voucher không áp dụng thành công",
+            },
+          };  
+        } 
+        const result = await this.processVoucher(
+          order_price,
+          shipping_fee,
+          promotion_code,
+          checkData,
+          customer_id
+        );
+        return result;
+      } else {
+        const result = await this.processVoucher(
+          order_price,
+          shipping_fee,
+          promotion_code,
+          checkData,
+          customer_id
+        );
+
+        return result;
+      }
+    } catch (error: any) {
+      this.logger.log(`Error: ${error}`);
+      return Object.assign({
+        status: `error`,
+        error: error.message,
+        data: {
+          promotion_status: `error`,
+          promotion_message: `Đã xảy ra lỗi trong quá trình kiểm tra Voucher`,
+        },
+      });
+    }
+  }
+
+  async processVoucher(
+    order_price: number,
+    shipping_fee: number,
+    promotion_code: string,
+    voucherData:any,
+    customer_id: string
+  ): Promise<any> {
+    try {
+      var checkCountData = await this.appliedVoucherService.countUsedVouchers(
+        promotion_code
+      );
+      // Kiểm tra hạn sử dụng của voucher
+      if (voucherData == null) {
+        return {
+          status: "error",
+          data: {
+            promotion_status: `invalid`,
+            promotion_message: "Voucher không áp dụng thành công",
+          },
+        };
+      } 
+      const currentDateTime = new Date();
+      const orderWithinPromotionTimeRange =
+        await this.utilsService.isOrderWithinPromotionTimeRange(
+          voucherData.data.start_date,
+          voucherData.data.end_date,
+          currentDateTime
+        );
+      //kiểm tra thời gian voucher
+      if (!orderWithinPromotionTimeRange) {
+        return {
+          status: "error",
+          data: {
+            promotion_status: `expired`,
+            promotion_message: "Voucher không áp dụng thành công",
+          },
+        };
+      } 
+      if (voucherData.data.usage_limit === 0) {
+        return await this.handleDiscountType(
+          voucherData,
+          promotion_code,
+          order_price,
+          shipping_fee
+        );
+      } else {
+        const checkUsages = await this.utilsService.isCheckVoucherUsage(
+          voucherData.data.usage_limit, // Số lượt tối đa
+          checkCountData // Số lượt đã sử dụng
+        );
+        if (!checkUsages) {
+          return {
+            status: "error",
+            data: {
+              promotion_status: `out-of-used-counting`,
+              promotion_message: "Voucher không áp dụng thành công",
+            },
+          };
+        } 
+        return await this.handleDiscountType(
+          voucherData,
+          promotion_code,
+          order_price,
+          shipping_fee
+        );
+      }
+    } catch (error: any) {
+      this.logger.log(`Error: ${error}`);
+      return Object.assign({
+        status: `error`,
+        error: error.message,
+        data: {
+          promotion_status: `error`,
+          promotion_message: `Đã xảy ra lỗi trong quá trình kiểm tra Voucher`,
+        },
+      });
+    }
+  }
+
+  //Xử lý từng trường hợp giảm giá
+   async handleDiscountType(
+    checkData: any,
+    promotion_code: string,
+    order_price: number,
+    freeShipFeenumbers: number
+  ) {
+    try {
+    switch (checkData.data.discount_type) {
+      // Thực hiện hành động khi discountType = '1' (DiscountByPercent) 
+      case '1':
+        const outputDiscountPercent = await this.utilsService.calculateDiscountPercent(
+          promotion_code,
+          order_price,
+          checkData.data.discount_percent,
+        );
+        return Object.assign({
+          status: "success",
+          data: outputDiscountPercent,
+        });
+      case '2':
+        // Thực hiện hành động khi discountType = '2' (DiscountByMiniOrder)
+        if (order_price >= checkData.data.minimum_order_value) {
+          const outputDiscountMiniOrder =
+            await this.utilsService.calculateDiscountMiniumOrder(
+              promotion_code,
+              checkData.data.discount_value
+            );
+          return Object.assign({
+            status: "success",
+            data: outputDiscountMiniOrder,
+          });
+        } else {
+          return Object.assign({
+            status: "error",
+            message: `Đơn hàng chưa đạt giá trị tối thiểu`,
+          });
+        }
+      case '3':
+        // Thực hiện hành động khi discountType = '3' (DiscountByFreeShip)
+        const outputDiscountFreeShip = await this.utilsService.calculateDiscountForShip(
+          promotion_code,
+          checkData.data.discount_value,
+          freeShipFeenumbers
+        );
+        return Object.assign({
+          status: "success",
+          data: outputDiscountFreeShip,
+        });
+      case '4':
+        // Thực hiện hành động khi discountType = '4' (DiscountByFreeShip)
+        const outputDiscountFreeShipPercent = await this.utilsService.calculateDiscountForShipByPercent(
+          promotion_code,
+          checkData.data.discount_percent,
+          freeShipFeenumbers
+        );
+        return Object.assign({
+          status: "success",
+          data: outputDiscountFreeShipPercent,
+        });
+        default: return Object.assign(
+          { 
+            message: `No implemented voucher for delivery service`,
+          }); 
+    }
+    } catch (error:any) {
+      this.logger.log(`error: ${error}`);
     }
   }
 }

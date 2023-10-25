@@ -20,7 +20,8 @@ export class AppController {
       input.shipping_fee,
       input.promotion_code,
       input.customer_id,
-      input.merchant_id);
+      input.merchant_id,
+      input.service_type);
     return result;
   }
 

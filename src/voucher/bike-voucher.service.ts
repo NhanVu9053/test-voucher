@@ -12,7 +12,6 @@ import { AppliedVoucherService } from "src/applied_voucher/applied_voucher.servi
 import { InputCheckAvailableVoucher } from "./models/input.checkAvailableVoucher";
 import { MerchantsQueueService } from "../merchants-queue/merchants-queue.service";
 import { isDateRangeValid } from "../utils/DateRangeValid"
-
 import { VoucherAppliedMerchantService } from "../voucher-applied-merchant/voucher-applied-merchant.service";
 import { UtilsVoucherService } from "./utils-voucher.service";
 @Injectable()
@@ -81,6 +80,193 @@ export class BikeVoucherService {
     } catch (error: any) {
       this.logger.log(`Error: ${error}`);
       this.logger.log(`Error: ${error.message}`);
+    }
+  }
+  async bike_check_voucher(
+    order_price: number,
+    shipping_fee: number,
+    promotion_code: string,
+    customer_id: string,
+    merchantId: string
+  ): Promise<any> {
+    try {
+      console.log(`bike-voucher: checking...`);
+      var checkData = await this.utilsService.getVoucherByCode(promotion_code);
+      if (!checkData.check) {
+        return {
+          status: "error",
+          data: {
+            promotion_status: `invalid`,
+            promotion_message: "Voucher không áp dụng thành công",
+          },
+        };
+      }
+      if (checkData.data.is_for_specified_merchants) {
+        const isForSpecified =
+          await this.voucherAppliedMerchantRepository.checkFindMerchantByCode(
+            promotion_code,
+            merchantId
+          );
+        if (!isForSpecified) {
+          return {
+            status: "error",
+            data: {
+              promotion_status: `Mã ${promotion_code} không áp dụng cho cửa hàng này`,
+              promotion_message: "Voucher không áp dụng thành công",
+            },
+          };  
+        } 
+        const result = await this.processVoucher(
+          order_price,
+          promotion_code,
+          checkData,
+          customer_id
+        );
+        return result;
+      } else {
+        const result = await this.processVoucher(
+          order_price,
+          promotion_code,
+          checkData,
+          customer_id
+        );
+        return result;
+      }
+    } catch (error: any) {
+      this.logger.log(`Error: ${error.message}`);
+      return Object.assign({
+        status: `error`,
+        error: error.message,
+        data: {
+          promotion_status: `error`,
+          promotion_message: `Đã xảy ra lỗi trong quá trình kiểm tra Voucher`,
+        },
+      });
+    }
+  }
+
+  async processVoucher(
+    order_price: number,
+    promotion_code: string,
+    voucherData:any,
+    customer_id: string
+  ): Promise<any> {
+    try {
+      var checkCountData = await this.appliedVoucherService.countUsedVouchers(
+        promotion_code
+      );
+      // Kiểm tra hạn sử dụng của voucher
+      if (voucherData == null) {
+        return {
+          status: "error",
+          data: {
+            promotion_status: `invalid`,
+            promotion_message: "Voucher không áp dụng thành công",
+          },
+        };
+      } 
+      const currentDateTime = new Date();
+      const orderWithinPromotionTimeRange =
+        this.utilsService.isOrderWithinPromotionTimeRange(
+          voucherData.data.start_date,
+          voucherData.data.end_date,
+          currentDateTime
+        );
+      //kiểm tra thời gian voucher
+      if (!orderWithinPromotionTimeRange) {
+        return {
+          status: "error",
+          data: {
+            promotion_status: `expired`,
+            promotion_message: "Voucher không áp dụng thành công",
+          },
+        };
+      } 
+      if (voucherData.data.usage_limit === 0) {
+        return await this.handleDiscountType(
+          voucherData,
+          promotion_code,
+          order_price,
+        );
+      } else {
+        this.logger.log("checkData.data.usage_limit > 0");
+        const checkUsages = await this.utilsService.isCheckVoucherUsage(
+          voucherData.data.usage_limit, // Số lượt tối đa
+          checkCountData // Số lượt đã sử dụng
+        );
+        if (!checkUsages) {
+          return {
+            status: "error",
+            data: {
+              promotion_status: `out-of-used-counting`,
+              promotion_message: "Voucher không áp dụng thành công",
+            },
+          };
+        } 
+        return await this.handleDiscountType(
+          voucherData,
+          promotion_code,
+          order_price,
+          
+        );
+      }
+    } catch (error: any) {
+      this.logger.log(`Error: ${error.message}`);
+      return Object.assign({
+        status: `error`,
+        error: error.message,
+        data: {
+          promotion_status: `error`,
+          promotion_message: `Đã xảy ra lỗi trong quá trình kiểm tra Voucher`,
+        },
+      });
+    }
+  }
+
+  //Xử lý từng trường hợp giảm giá
+   async handleDiscountType(
+    checkData: any,
+    promotion_code: string,
+    order_price: number,
+  ) {
+    try {
+    switch (checkData.data.discount_type) {
+      // Thực hiện hành động khi discountType = '1' (DiscountByPercent) 
+      case '1':
+        const outputDiscountPercent = await this.utilsService.calculateDiscountPercent(
+          promotion_code,
+          order_price,
+          checkData.data.discount_percent,
+        );
+        return Object.assign({
+          status: "success",
+          data: outputDiscountPercent,
+        });
+      case '2':
+        // Thực hiện hành động khi discountType = '2' (DiscountByMiniOrder)
+        if (order_price >= checkData.data.minimum_order_value) {
+          const outputDiscountMiniOrder =
+            await this.utilsService.calculateDiscountMiniumOrder(
+              promotion_code,
+              checkData.data.discount_value
+            );
+          return Object.assign({
+            status: "success",
+            data: outputDiscountMiniOrder,
+          });
+        } else {
+          return Object.assign({
+            status: "error",
+            message: `Đơn hàng chưa đạt giá trị tối thiểu`,
+          });
+        }
+      default: return Object.assign(
+        { 
+          message: `No implemented voucher for bike service`,
+        }); //
+    }
+    } catch (error:any) {
+      this.logger.log(`error: ${error}`);
     }
   }
 }

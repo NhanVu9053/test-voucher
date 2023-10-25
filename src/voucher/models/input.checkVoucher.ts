@@ -11,4 +11,6 @@ export class InputCheckVoucher {
     customer_id: string
     @IsOptional()
     merchant_id:string
+    @IsOptional()
+    service_type:string
   }
